@@ -1,0 +1,12 @@
+{
+	"cube_filename": "{Cube}.fits",
+	"regions_filename": "None" or "{Cube}_region.reg",
+	"redshift": 0.01773,
+	"center_wave": 6562.8,
+	"margin": 50,
+	"target_sn": 10.0,
+	"output_cube_fn": "{Cube}_binned.fits",
+	"output_binmap_fn": "bin_map_{Cube}.csv",
+	"output_fits_fn": "bin_map_{Cube}.fits",
+	"output_spec_fn": "{Cube}_spec.png"
+}

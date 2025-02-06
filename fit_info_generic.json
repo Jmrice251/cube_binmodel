@@ -1,0 +1,25 @@
+{
+	"cube_filename": "{Cube}.fits",
+	"mask_filename": "{Cube}_mask.reg",
+	"result_dir_name": "fit_result_{Cube}",
+	"redshift": 0.01773,
+	"wave_fit_window": [6400, 6900],
+	"margin": 50,
+	"model_filename": "model_fiveline2.json",
+	"method": "least_squares",
+	"contpoly_order": 4,
+	"numprocs": -1,
+	"binmap_fn": "bin_map_{Cube}.csv",
+	"output_spec_fn": "{cube}_fitspec",
+	"sn_cutoff": 2,
+	"fit_result_fn": false,
+	"output_maps": {
+		"A1_map": "A1",
+		"A2_map": "A2",
+		"A3_map": "3*A1",
+		"A4_map": "A4",
+		"A5_map": "A5",
+		"z_map": "z",
+		"sigma_map": "sigma"
+	}
+}

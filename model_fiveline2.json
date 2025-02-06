@@ -1,0 +1,53 @@
+{
+	"guess_params": false,
+	"variables": [
+		{ "name": "z", "init": 0.01773, "lb": 0.001273, "ub": 0.05273 },
+		{ "name": "A1", "init": 1.3, "lb": -50, "ub": 6667 },
+		{ "name": "A2", "init": 5.5, "lb": -50, "ub": 10000 },
+		{ "name": "A4", "init": 1.6, "lb": -50, "ub": 10000 },
+		{ "name": "A5", "init": 1.2, "lb": -50, "ub": 10000 },
+		{ "name": "sigma", "init": 2, "lb": 0.1, "ub": 20 }
+	],
+	"components": [
+		{
+			"type": "gaussian",
+			"name": "Line 1",
+			"center": 6548.05,
+			"flux": "A1",
+			"velo": "z",
+			"disp": "sigma"
+		},
+		{
+			"type": "gaussian",
+			"name": "Line 2 (Ha)",
+			"center": 6562.80,
+			"flux": "A2",
+			"velo": "z",
+			"disp": "sigma"
+		},
+		{
+			"type": "gaussian",
+			"name": "Line 3",
+			"center": 6583.45,
+			"flux": "3*A1",
+			"velo": "z",
+			"disp": "sigma"
+		},
+		{
+			"type": "gaussian",
+			"name": "Line 4",
+			"center": 6717.44,
+			"flux": "A4",
+			"velo": "z",
+			"disp": "sigma"
+		},
+		{
+			"type": "gaussian",
+			"name": "Line 5",
+			"center": 6730.81,
+			"flux": "A5",
+			"velo": "z",
+			"disp": "sigma"
+		}
+	]
+}
