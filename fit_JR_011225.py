@@ -61,51 +61,52 @@ if not fit_result_fn:
     # create directory if necessary
     if not os.path.exists(result_dir_name):
         os.mkdir(result_dir_name)
-    
+
+    # Create directory name to store fit result for retrieval
     today = date.today()
     fit_result_dir = f'{result_dir_name}/fit_result_{today}.json'
     
         
-#--------------------------------------------------------------------------------
-# Process information from cube
+    #--------------------------------------------------------------------------------
+    # Process information from cube
     cube = Cube(cube_fn)
     cube_wcs = WCS(cube.get_wcs_header())
     N_w, N_y, N_x = cube.shape
 
-# read region list
+    # read region list
     sky_mask_list = Regions.read(mask_fn)             # list of regions
     if (len(sky_mask_list) == 0):
         print("ERROR: no mask regions found")
         exit()
-# form union of all regions
+    # form union of all regions
     sky_mask = sky_mask_list[0]
     for i in range(1, len(sky_mask_list)):
         sky_mask = sky_mask.union(sky_mask_list[i])
-# convert to pixel region, using celestial WCS
-# 0 = out, 1 = in
+    # convert to pixel region, using celestial WCS
+    # 0 = out, 1 = in
     pix_mask = 1 - sky_mask.to_pixel(cube_wcs.celestial).to_mask('center').to_image((N_y, N_x)).astype('int')
 
-# read in bin file
+    # read in bin file
     old_bin_array = np.loadtxt(binmap_fn, dtype=int)      # read the map of bin in as integer array
     old_bin_array = np.where(pix_mask == 0, -1, old_bin_array)        # filter out mask (out pixels => in bin -1)
 
-# map the old bin ids to new bin ids
+    # map the old bin ids to new bin ids
     old_bin_ids = np.unique(old_bin_array)
     old_bin_ids = np.delete(old_bin_ids, np.where(old_bin_ids == -1))
     new_bin_array = np.full((N_y, N_x), -1, dtype='int')
     for i in range(len(old_bin_ids)):
         new_bin_array = np.where(old_bin_array == old_bin_ids[i], i, new_bin_array)
 
-# get information about bin
+    # get information about bin
     n_bins = np.max(new_bin_array) + 1
     pixels_per_bin = np.array([np.count_nonzero(new_bin_array == bin_id) for bin_id in range(n_bins)], dtype=int)     # how many pixels in each bin
 
-# get the coordinates that are inside valid bins
+    # get the coordinates that are inside valid bins
     (y_inside, x_inside) = np.nonzero(new_bin_array >= 0)
     inside_pix_coords = list(zip(y_inside, x_inside))
 
-#-------------------------------------------------------------------------------------
-# EXTRACT THE SPECTRA
+    #-------------------------------------------------------------------------------------
+    # EXTRACT THE SPECTRA
     print("Extracting the spectra from pixels:...")
     fit_min, fit_max = max(wave_min, cube.wave.get_start()), min(wave_max, cube.wave.get_end())
 
@@ -120,7 +121,7 @@ if not fit_result_fn:
     # cube of data within wavelength range
     cube2 = cube[lo_pix:(hi_pix+1), :, :]
     cube_data = cube2.data.data
-    cube_data[np.isnan(cube_data)] = 0
+    cube_data[np.isnan(cube_data)] = 0 # remove nan values in cube data and cube_var
     cube_var = cube2.var.data
     cube_var[np.isnan(cube_var)] = 0.000001
     cube_unit = cube2.unit
@@ -146,21 +147,23 @@ if not fit_result_fn:
     avg_signal_array = avg_signal_array / (reshaped_nPixels)             # signal for each bin
     avg_variance_array = avg_variance_array / (reshaped_nPixels**2)      # variance for each bin
 
-    np.savetxt(f'{result_dir_name}/avg_sig_array.csv', avg_signal_array, fmt="%f")
+    # save signal and variance arrays as csv files for fit retrieval
+    np.savetxt(f'{result_dir_name}/avg_sig_array.csv', avg_signal_array, fmt="%f")  
     np.savetxt(f'{result_dir_name}/avg_var_array.csv', avg_variance_array, fmt="%f")
 
     avg_noise_array = np.sqrt(avg_variance_array)
-#-----------------------------------------------------------
-# parsed model
+    #-----------------------------------------------------------
+    # parsed model
     Model = features.parseModelFunction(model_fn, delta=CDELT)
 
-# Do work in parallel
+    # Do work in parallel
     print('Fitting...')
     results = Parallel(n_jobs=numprocs, backend="loky")(delayed(features.fit_lm)(bin, Model, wave_A, avg_signal_array[bin], avg_noise_array[bin], method, contpoly_order=contpoly_order) for bin in tqdm(range(n_bins)))
 
-#----------------------------------------------------------------------------------------------
-# RETRIEVE RESULT
+    #----------------------------------------------------------------------------------------------
+    # RETRIEVE RESULT
     fitresult_dict = {}
+    # save cube info needed for fit retriveal in dictionary
     fitresult_dict['cube_info'] = {
         'wave_A': wave_A,
         'cube_unit': cube_unit,
@@ -230,6 +233,7 @@ if not fit_result_fn:
         except:
             print(f"Error when creating map {map_name}.fits!\n")
 
+    # convert fit result dict to all json parsable types so they can be stored and retrieved laterre
     json_fitresult_dict = features.convert_to_json_serializable(fitresult_dict)
     with open(fit_result_dir, "w") as fit:
         json.dump(json_fitresult_dict, fit)
@@ -237,52 +241,58 @@ if not fit_result_fn:
 # --------------------------------------------------------------------------
 # fit retrieval
 else:
+    # open fit result json file
     print('Loading fit result...')
     fit_result_dir = f'{result_dir_name}/{fit_result_fn}'
     with open(fit_result_dir, "r") as fit:
         json_fitresult_dict = json.load(fit)
 
+    # parse json dictionary back to classes needed for interactive mode
     fitresult_dict = features.convert_to_interactive(json_fitresult_dict)
 
+    # store cube info variables from dictionary to variable names used in interactive mode
     cube_wcs = fitresult_dict['cube_info']['cube_wcs']
     N_w, N_y, N_x = fitresult_dict['cube_info']['N_w'], fitresult_dict['cube_info']['N_y'], fitresult_dict['cube_info']['N_x']
     wave_A = fitresult_dict['cube_info']['wave_A']
     CDELT = fitresult_dict['cube_info']['CDELT']
     cube_unit = fitresult_dict['cube_info']['cube_unit']
 
+    # read region list
     print('Reading Binmap...')
     sky_mask_list = Regions.read(mask_fn)             # list of regions
     if (len(sky_mask_list) == 0):
         print("ERROR: no mask regions found")
         exit()
-# form union of all regions
+    # form union of all regions
     sky_mask = sky_mask_list[0]
     for i in range(1, len(sky_mask_list)):
         sky_mask = sky_mask.union(sky_mask_list[i])
-# convert to pixel region, using celestial WCS
-# 0 = out, 1 = in
+    # convert to pixel region, using celestial WCS
+    # 0 = out, 1 = in
     pix_mask = 1 - sky_mask.to_pixel(cube_wcs.celestial).to_mask('center').to_image((N_y, N_x)).astype('int')
 
-# read in bin file
+    # read in bin file
     old_bin_array = np.loadtxt(binmap_fn, dtype=int)      # read the map of bin in as integer array
     old_bin_array = np.where(pix_mask == 0, -1, old_bin_array)        # filter out mask (out pixels => in bin -1)
 
-# map the old bin ids to new bin ids
+    # map the old bin ids to new bin ids
     old_bin_ids = np.unique(old_bin_array)
     old_bin_ids = np.delete(old_bin_ids, np.where(old_bin_ids == -1))
     new_bin_array = np.full((N_y, N_x), -1, dtype='int')
     for i in range(len(old_bin_ids)):
         new_bin_array = np.where(old_bin_array == old_bin_ids[i], i, new_bin_array)
 
-# get information about bin
+    # get information about bin
     n_bins = np.max(new_bin_array) + 1
     pixels_per_bin = np.array([np.count_nonzero(new_bin_array == bin_id) for bin_id in range(n_bins)], dtype=int)     # how many pixels in each bin
 
+    # load average signal and variance arrays
     print('Extracting data from average arrays...')
     avg_signal_array = np.array(np.loadtxt(f'{result_dir_name}/avg_sig_array.csv', dtype=float))
     avg_variance_array = np.array(np.loadtxt(f'{result_dir_name}/avg_var_array.csv', dtype=float))
     avg_noise_array = np.sqrt(avg_variance_array)
 
+    # save model
     Model = features.parseModelFunction(model_fn, delta=CDELT)
 
 # --------------------------------------------------------------------------
@@ -293,7 +303,8 @@ while True:
     
     # exit
     if user_input == 'q' or user_input == 'Q':
-        if output_spec_fn:
+        # ask if the average spectrum needs to be output after quitting
+        if output_spec_fn: 
             while True:
                 print("\nDo you want to output the Average Spectrum? (y/n):")
                 user_input = input()
@@ -301,7 +312,7 @@ while True:
                     # Total Spectrum
                     print("Creating Average Spectrum")
                     zeroed_signal_array = avg_signal_array
-                    zeroed_signal_array[np.isnan(avg_signal_array)] = 0 #change nan values to zero to not mess up the spec graph
+                    zeroed_signal_array[np.isnan(avg_signal_array)] = 0 #change nan values to zero
                     zeroed_variance_array = avg_variance_array
                     zeroed_variance_array[np.isnan(avg_variance_array)] = 0
 
@@ -341,7 +352,7 @@ while True:
         else:
             exit()
     
-    # check valid input
+    # check valid input, accepts image coordinates or bin number
     split_list = user_input.split()
     if len(split_list) != 2 and len(split_list) != 1:
         print("Invalid input. Try again...\n")
@@ -349,7 +360,7 @@ while True:
         
     # get pixel coordinate
     pix_coord = None
-    if len(split_list) == 2:
+    if len(split_list) == 2: # if image coordinates given
         try:
             ycoord, xcoord = int(split_list[1]), int(split_list[0])
             pix_coord = (ycoord, xcoord)
@@ -357,7 +368,7 @@ while True:
         except:
             print("Invalid coordinate. Try again...\n")
             continue
-    else:
+    else: # if bin number given
         try:
             bin_id = int(split_list[0])
             (ypixel, xpixel) = np.where(new_bin_array == bin_id)
