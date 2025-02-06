@@ -5,7 +5,6 @@ import copy
 import astropy.units as u
 import astropy.wcs as w
 import astropy.io.fits as fits
-import tqdm
 
 # Changes from npichette: Line 158: Added an if statement so that only bins that have a non-empty wave ok-value array are fitted. An else is added here as well to keep bin-numbers throughout. Line 128: Added an if statement so that bins that were ignored as part of the line 158 change are not fit to avoid NaN errors. 
 
