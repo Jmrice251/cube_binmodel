@@ -5,6 +5,7 @@ import copy
 import astropy.units as u
 import astropy.wcs as w
 import astropy.io.fits as fits
+import tqdm
 
 # Changes from npichette: Line 158: Added an if statement so that only bins that have a non-empty wave ok-value array are fitted. An else is added here as well to keep bin-numbers throughout. Line 128: Added an if statement so that bins that were ignored as part of the line 158 change are not fit to avoid NaN errors. 
 
@@ -15,23 +16,62 @@ import astropy.io.fits as fits
 # Changes from Huan (11/15/2024): add a covariance calculated flag to fit result (Lines 237-244)
 
 #----------------------------------------------------------------------------------------
+def estimatewidth(x, y, wavelength, z):
+
+    glambda = wavelength*(1+z)
+    
+    checkrange = 40/(1+z)
+    nearpeak = np.asarray(np.abs(x-glambda) <= checkrange).nonzero()
+    nx = np.shape(nearpeak)[1]
+
+    if nx < 5:
+        raise Exception("Not enough data points near peak")
+
+    x = x[nearpeak]
+    y = y[nearpeak]
+
+    i_s = np.argsort(x)
+    xs, ys = x[i_s], y[i_s]
+
+    xmin, xmax, ymin, ymax = np.min(xs), np.max(xs), np.nanmin(ys), np.nanmax(ys)
+    dx = 0.5 * np.concatenate((np.array([xs[1] - xs[0]]), xs[2:] - xs[:nx-2], np.array([xs[nx-1] - xs[nx-2]])))
+    totalarea = np.sum(np.multiply(ys,dx))
+    av = totalarea/(xmax-xmin)
+
+    wh1 = np.asarray(ys >= av).nonzero()
+    ct1 = np.shape(wh1)[1]
+    wh2 = np.asarray(ys <= av).nonzero()
+    ct2 = np.shape(wh2)[1]
+    if ct1 == 0 or ct1 == 0:
+        raise Exception("Average should fall between range of Y values but doesn't")
+
+    cent = x[np.asarray(y == ymax).nonzero()]
+    cent = cent[0]
+    peak = ymax - av
+    peakarea = totalarea - np.sum(np.multiply(dx[wh2],ys[wh2]))
+    if peak == 0:
+        peak = 0.5*peakarea
+    width = peakarea / (2*abs(peak))
+
+    return width
+
 
 # process python dictionary to a json serializable format
 def convert_to_json_serializable(data):
-    if isinstance(data, np.ndarray): #Arrays are converted to lists
+    if isinstance(data, np.ndarray):
         return data.tolist()
-    elif isinstance(data, dict): #Dictionaries keys are fed through again to convert those to proper classes
+    elif isinstance(data, dict):
         return {k: convert_to_json_serializable(v) for k, v in data.items()}
-    elif isinstance(data, list): #List elements are fed through again
+    elif isinstance(data, list):
         return [convert_to_json_serializable(v) for v in data]
-    elif isinstance(data, u.CompositeUnit): #Astropy unit classes are converted to strings
-        return str(data) 
-    elif isinstance(data, w.WCS): #WCS objects are converted to headers first and then fed through again
+    elif isinstance(data, u.CompositeUnit):
+        return str(data)
+    elif isinstance(data, w.WCS):
         data = data.to_header()
         return convert_to_json_serializable(data)
-    elif isinstance(data, fits.Header): #Header objects are converted to dictionaries
+    elif isinstance(data, fits.Header):
         return {k: convert_to_json_serializable(v) for k, v in data.items()}
-    elif isinstance(data, parameter.Parameter): #Parameter objects are converted to dictionaries manually
+    elif isinstance(data, parameter.Parameter):
         data = {
             'name': data.name,
             'value': data.value,
@@ -43,19 +83,19 @@ def convert_to_json_serializable(data):
             'stderr': data.stderr
         }
         return convert_to_json_serializable(data)
-    else: #If the type was already json serializable, then return that data to stop iteration
+    else:
         return data
 
 # process json formated dictionary back to iterable 
 def convert_to_interactive(data):
-    for key in list(data.keys()): 
-        if key == 'cube_info': #Change cube wcs back to WCS class and change wave_A back to an array
+    for key in list(data.keys()):
+        if key == 'cube_info':
             data[key]['cube_wcs'] = w.WCS(fits.Header(data[key]['cube_wcs']))
             data[key]['wave_A'] = np.array(data[key]['wave_A'])
-        elif isinstance(int(key), int): 
+        elif isinstance(int(key), int):
             data[int(key)] = data[key]
-            final_params = Parameters() #initialize a parameters object to put back fit parameters into
-            for k in list(data[key]['final_params'].keys()): 
+            final_params = Parameters()
+            for k in list(data[key]['final_params'].keys()):
                 name = data[key]['final_params'][k]['name']
                 value = data[key]['final_params'][k]['value']
                 vary = data[key]['final_params'][k]['vary']
@@ -64,9 +104,9 @@ def convert_to_interactive(data):
                 expr = data[key]['final_params'][k]['expr']
                 brute_step = data[key]['final_params'][k]['brute_step']
                 stderr = data[key]['final_params'][k]['stderr']
-                final_params.add(name, value=value, vary=vary, min=min, max=max, expr=expr, brute_step=brute_step) #add dictionary values to parameter objects
+                final_params.add(name, value=value, vary=vary, min=min, max=max, expr=expr, brute_step=brute_step)
                 final_params[name].stderr = stderr
-            data[int(key)]['final_params'] = final_params #replace dictionary with parameters and then delete dictionary
+            data[int(key)]['final_params'] = final_params
             del data[key]
             
     return data
@@ -192,7 +232,7 @@ def guess_model(fit_model, X, Y):
 
             width = estimatewidth(X, Y, 6562.819, fit_model.parsed_init_params['z'].value)
                 
-            # set parameter hints, i.e. guessed constraints
+            # set parameter hints
             self.parsed_init_params = None
             for param in fit_model.parsed_init_params:
                 self.set_param_hint(name=param, vary=True)
@@ -207,7 +247,7 @@ def guess_model(fit_model, X, Y):
                 else:
                     self.set_param_hint(name=param, min=fit_model.parsed_init_params[param].min, max=fit_model.parsed_init_params[param].max)
             init_vals = {}    
-            for param in fit_model.parsed_init_params: # guess initial values
+            for param in fit_model.parsed_init_params:
                 if param == 'z':
                     init_vals[param] = fit_model.parsed_init_params[param].value
                 elif param == 'sigma':
@@ -225,7 +265,7 @@ def guess_model(fit_model, X, Y):
 
 
 # define fit function
-def fit_lm(label, fit_model, X, Y, dY, method_name, constrain, model_fn, redshift, sn_cutoff, contpoly_order):
+def fit_lm(label, fit_model, X, Y, dY, method_name, contpoly_order):
 
     try:
         # weights from standard error
@@ -246,54 +286,11 @@ def fit_lm(label, fit_model, X, Y, dY, method_name, constrain, model_fn, redshif
         # if result stay None, throw error
         if (result is None):
             raise Exception("FitResult still None after fitting")
-
-        if constrain:
-            with open(model_fn, "r") as model:
-                model_dict = json.load(model)
-            constraints = model_dict["constraints"][0]
-            params = result.params
-            if params['z'].stderr and params.values() != None:
-                amps = []
-                errs = []
-                mins = []
-                maxs = []
-                scope = {}
-                for param in params:
-                    exec(f"{str(param)} = params[param].value")
-                    exec(f"{str(param)}err = params[param].stderr")
-                    exec(f"{str(param)}min = params[param].min")
-                    exec(f"{str(param)}max = params[param].max")                
-                    exec(f"amps.append({str(param)})")
-                    exec(f"errs.append({str(param)}err)")
-                    exec(f"mins.append({str(param)}min)")
-                    exec(f"maxs.append({str(param)}max)")
-                log_states = {}
-                for const in constraints.values():
-                    log_states[str(const)] = eval(const)
-                remove = not all(list(log_states.values()))
-                if remove:
-                    for param in params:
-                        if param == 'z':
-                            params[param].min = -100000
-                            params[param].value = -100000
-                        else:
-                            params[param].min = 0
-                            params[param].value = 0
-            else:
-                for param in params:
-                    if param == 'z':
-                        params[param].min = -100000
-                        params[param].value = -100000
-                    else:
-                        params[param].min = 0
-                        params[param].value = 0
-        else:
-            params = result.params
         
         # is covariance calculated
         isCovarCalculated = (result.covar is not None)
 
-        return (label, params, contpoly_coefs, isCovarCalculated, result.covar)
+        return (label, result.params, contpoly_coefs, isCovarCalculated, result.covar)
             
     except Exception as err:
         print("Failed to fit model on spectrum:", err)
@@ -346,47 +343,7 @@ def get_corrected_width(observed_xcen, observed_width):
         return 0
     else:
         return np.sqrt(observed_width**2 - instrres_A**2)    # return subtracted width
-
-def estimatewidth(x, y, wavelength, z):
-    #estimatewidth is kubeviz_linefit_estimatekinematics (line 1216-1281)
-    glambda = wavelength*(1+z)
     
-    checkrange = 40/(1+z)
-    nearpeak = np.asarray(np.abs(x-glambda) <= checkrange).nonzero()
-    nx = np.shape(nearpeak)[1]
-
-    if nx < 5:
-        raise Exception("Not enough data points near peak")
-
-    x = x[nearpeak]
-    y = y[nearpeak]
-
-    i_s = np.argsort(x)
-    xs, ys = x[i_s], y[i_s]
-
-    xmin, xmax, ymin, ymax = np.min(xs), np.max(xs), np.nanmin(ys), np.nanmax(ys)
-    dx = 0.5 * np.concatenate((np.array([xs[1] - xs[0]]), xs[2:] - xs[:nx-2], np.array([xs[nx-1] - xs[nx-2]])))
-    totalarea = np.sum(np.multiply(ys,dx))
-    av = totalarea/(xmax-xmin)
-
-    wh1 = np.asarray(ys >= av).nonzero()
-    ct1 = np.shape(wh1)[1]
-    wh2 = np.asarray(ys <= av).nonzero()
-    ct2 = np.shape(wh2)[1]
-    if ct1 == 0 or ct1 == 0:
-        raise Exception("Average should fall between range of Y values but doesn't")
-
-    cent = x[np.asarray(y == ymax).nonzero()]
-    cent = cent[0]
-    peak = ymax - av
-    peakarea = totalarea - np.sum(np.multiply(dx[wh2],ys[wh2]))
-    if peak == 0:
-        peak = 0.5*peakarea
-    width = peakarea / (2*abs(peak))
-
-    return width
-
-
 # display line information
 def print_line_info(line_dict, bestfit_params):
     
